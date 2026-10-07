@@ -1,0 +1,12 @@
+{
+  "name": "BenefitFinder",
+  "short_name": "Benefits",
+  "description": "Private, explainable local benefits discovery for Sunnyvale and Santa Clara County.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f0e6",
+  "theme_color": "#173c35",
+  "icons": [
+    { "src": "/og.png", "sizes": "1200x630", "type": "image/png", "purpose": "any" }
+  ]
+}

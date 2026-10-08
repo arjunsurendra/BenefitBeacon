@@ -1,5 +1,5 @@
-import { BenefitFinderApp } from "@/components/BenefitFinderApp";
+import { BenefitBeaconApp } from "@/components/BenefitBeaconApp";
 
 export default function Home() {
-  return <BenefitFinderApp />;
+  return <BenefitBeaconApp />;
 }

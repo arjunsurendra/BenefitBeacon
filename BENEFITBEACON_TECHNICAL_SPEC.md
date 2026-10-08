@@ -1,25 +1,24 @@
-# BenefitFinder — Refined Technical Specification
+# BenefitBeacon — Refined Technical Specification
 
 ## Product thesis
 
-BenefitFinder is a local benefits navigation system with a deliberately narrow AI trust boundary. The model may understand language and produce explanations, but it may not determine eligibility. Every recommendation is reproducible from a versioned program record, a structured resident profile, and an auditable rule trace.
+BenefitBeacon is a local benefits navigation system with a deliberately narrow AI trust boundary. The model may understand language and produce explanations, but it may not determine eligibility. Every recommendation is reproducible from a versioned program record, a structured resident profile, and an auditable rule trace.
 
 ## System design
 
 ```text
-Voice / text / guided form
+Single free-text intake
           |
           v
 PII firewall (server-side regex + input limits)
           |
-          +---- private guided mode -------------------+
-          |                                             |
-          v                                             v
-OpenAI structured extraction                    Local extractor
-gpt-6-luna + strict JSON Schema                         |
-          +-------------------+-------------------------+
+          +---- OpenAI structured extraction ----------+
+          |      gpt-6-luna + strict JSON Schema        |
+          +---- local extractor fallback ---------------+
                               v
                     Normalized UserProfile
+                              |
+                  Optional missing-field questions
                               |
                     Deterministic rule graph
                               |
@@ -28,6 +27,22 @@ gpt-6-luna + strict JSON Schema                         |
                   Program-scoped evidence retrieval
                               |
                  Grounded UI + official citations
+```
+
+Live discovery joins the same flow after optional follow-ups:
+
+```text
+Structured profile + city / ZIP
+        |
+                              derived geography only
+                                                      |
+                                 official-domain web search
+                                                      |
+                         profile-aware structured ranking
+                                                      |
+                            HTTPS + citation + duplicate validation
+                                                      |
+                         "Eligibility not evaluated" result cards
 ```
 
 ## AI architecture
@@ -54,6 +69,12 @@ The first version uses a local lexical retriever over program names, categories,
 
 Result copy is generated from the rule trace and source snippet. Future model-generated explanations must receive only the rule outcome and retrieved chunks, return claim-to-source references, and pass a URL allowlist post-check. Unsupported claims must be replaced by “check with the agency.”
 
+### 6. Live location discovery
+
+Discovery starts after the resident submits or skips the optional follow-up form. Each uncached geography uses two `gpt-6-luna` Responses API calls: an official-domain `web_search`, followed by strict-schema ranking against the broad structured profile. The official research is cached for 24 hours by normalized geography only; later residents reuse that research while receiving a fresh profile-aware ranking. Server validation requires HTTPS, an allowlisted host, and a matching search citation. Results already in the curated catalog are removed.
+
+Live candidates are informational leads. They use the fixed status `unverified` and cannot enter the deterministic eligibility ranking until a human converts the source into a reviewed, versioned rule record.
+
 ## Privacy and security
 
 - No account and no server-side resident profile storage.
@@ -62,7 +83,9 @@ Result copy is generated from the rule trace and source snippet. Future model-ge
 - The API key is server-side only in `OPENAI_API_KEY`.
 - Hosted intake is rate-limited per edge client address.
 - Inputs are capped at 2,000 characters and never logged by application code.
-- Guided mode works without a network model call.
+- Every follow-up is optional, and the entire follow-up step can be skipped.
+- Live discovery starts only after the resident confirms or skips the optional questions.
+- The discovery model receives only broad structured fields, never the original free-text story.
 
 ## Evaluation plan
 

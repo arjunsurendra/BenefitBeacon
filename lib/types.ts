@@ -83,3 +83,43 @@ export type IntakeResponse = {
   model?: string;
   redacted: boolean;
 };
+
+export type Geography = {
+  label: string;
+  city?: string;
+  county?: string;
+  state?: string;
+  stateCode?: string;
+  zip?: string;
+  congressionalDistrict?: string;
+};
+
+export type DiscoveredProgram = {
+  id: string;
+  name: string;
+  level: "city" | "county" | "state" | "federal";
+  jurisdiction: string;
+  category: "food" | "health" | "utilities" | "home" | "veterans" | "family" | "transportation" | "other";
+  summary: string;
+  benefit: string;
+  eligibilityText: string;
+  applyUrl: string;
+  sourceUrl: string;
+  sourceLabel: string;
+  sourceSnippet: string;
+  relevanceReason: string;
+  relevanceScore: number;
+  discoveredAt: string;
+  status: "unverified";
+};
+
+export type DiscoveryResponse = {
+  geography: Geography;
+  candidates: DiscoveredProgram[];
+  mode: "openai";
+  model: string;
+  searchedAt: string;
+  cacheKey: string;
+  cached: boolean;
+  addressDiscarded: boolean;
+};

@@ -9,19 +9,19 @@ export async function generateMetadata(): Promise<Metadata> {
   const origin = `${protocol}://${host}`;
   return {
     metadataBase: new URL(origin),
-    title: "BenefitFinder — Local benefits, clearly explained",
+    title: "BenefitBeacon — Local benefits, clearly explained",
     description: "Discover verified Sunnyvale, Santa Clara County, California, and federal benefits with private AI-assisted intake and auditable eligibility rules.",
-    applicationName: "BenefitFinder",
+    applicationName: "BenefitBeacon",
     manifest: "/manifest.webmanifest",
     icons: { icon: "/og.png", apple: "/og.png" },
     openGraph: {
-      title: "BenefitFinder",
+      title: "BenefitBeacon",
       description: "AI explains. Rules decide. Find verified benefits you may qualify for.",
       type: "website",
       url: origin,
-      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "BenefitFinder — AI explains. Rules decide." }],
+      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "BenefitBeacon — AI explains. Rules decide." }],
     },
-    twitter: { card: "summary_large_image", title: "BenefitFinder", description: "AI explains. Rules decide.", images: [`${origin}/og.png`] },
+    twitter: { card: "summary_large_image", title: "BenefitBeacon", description: "AI explains. Rules decide.", images: [`${origin}/og.png`] },
   };
 }
 

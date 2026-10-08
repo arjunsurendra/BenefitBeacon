@@ -12,16 +12,19 @@ async function render() {
   );
 }
 
-test("server-renders the finished BenefitFinder experience", async () => {
+test("server-renders the finished BenefitBeacon experience", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /<title>BenefitFinder/);
+  assert.match(html, /<title>BenefitBeacon/);
   assert.match(html, /You may qualify for help/);
   assert.match(html, /Tell us about your situation/);
   assert.match(html, /AI explains/);
-  assert.match(html, /Official sources/);
+  assert.match(html, /official sources/i);
+  assert.match(html, /Optional follow-ups/);
+  assert.match(html, /Live official sources/);
+  assert.doesNotMatch(html, /Search live programs|Use guided questions/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/);
 });
 

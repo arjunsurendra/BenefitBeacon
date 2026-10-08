@@ -99,7 +99,7 @@ export async function POST(request: Request) {
       text: {
         format: {
           type: "json_schema",
-          name: "benefitfinder_intake",
+          name: "benefitbeacon_intake",
           strict: true,
           schema: profileSchema,
         },
@@ -109,6 +109,8 @@ export async function POST(request: Request) {
   });
 
   if (!response.ok) {
+    if (response.status === 401) return Response.json({ error: "The OpenAI API key was rejected. Replace OPENAI_API_KEY in .env.local, then restart the local server." }, { status: 503 });
+    if (response.status === 429) return Response.json({ error: "The OpenAI project has reached a rate or usage limit. Guided matching is still available." }, { status: 429 });
     return Response.json({ error: "AI intake is temporarily unavailable. Guided matching is still available." }, { status: 502 });
   }
 

@@ -1,6 +1,6 @@
 {
-  "name": "BenefitFinder",
-  "short_name": "Benefits",
+  "name": "BenefitBeacon",
+  "short_name": "Beacon",
   "description": "Private, explainable local benefits discovery for Sunnyvale and Santa Clara County.",
   "start_url": "/",
   "display": "standalone",

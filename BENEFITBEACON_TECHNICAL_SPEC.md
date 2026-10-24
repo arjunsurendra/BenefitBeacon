@@ -1,110 +1,138 @@
-# BenefitBeacon — Refined Technical Specification
+# BenefitBeacon — Technical Specification
 
 ## Product thesis
 
-BenefitBeacon is a local benefits navigation system with a deliberately narrow AI trust boundary. The model may understand language and produce explanations, but it may not determine eligibility. Every recommendation is reproducible from a versioned program record, a structured resident profile, and an auditable rule trace.
+BenefitBeacon converts a resident’s plain-language situation into a small, privacy-conscious profile, then matches that profile against a presentation-ready local index of authoritative programs. The system is designed so network or model failure cannot remove the core result path.
 
-## System design
+The current resident-facing scope is Sunnyvale. The snapshot exposes 52 active records serving Sunnyvale, checked on October 23, 2026. Every record stores its own official source URL and freshness date. The data model retains multi-city support for a later expansion, but the current API rejects locations outside Sunnyvale.
 
-```text
-Single free-text intake
-          |
-          v
-PII firewall (server-side regex + input limits)
-          |
-          +---- OpenAI structured extraction ----------+
-          |      gpt-6-luna + strict JSON Schema        |
-          +---- local extractor fallback ---------------+
-                              v
-                    Normalized UserProfile
-                              |
-                  Optional missing-field questions
-                              |
-                    Deterministic rule graph
-                              |
-                EligibilityResult + audit trace
-                              |
-                  Program-scoped evidence retrieval
-                              |
-                 Grounded UI + official citations
-```
-
-Live discovery joins the same flow after optional follow-ups:
+## Runtime request flow
 
 ```text
-Structured profile + city / ZIP
-        |
-                              derived geography only
-                                                      |
-                                 official-domain web search
-                                                      |
-                         profile-aware structured ranking
-                                                      |
-                            HTTPS + citation + duplicate validation
-                                                      |
-                         "Eligibility not evaluated" result cards
+Situation text
+    -> validation and sensitive-pattern redaction
+    -> OpenAI structured intake OR local extractor
+    -> optional, skippable follow-ups
+    -> city/ZIP/address resolution
+    -> SQLite city-scope query
+    -> hard contradiction filters
+    -> local vector similarity + structured boosts
+    -> candidate pool
+    -> OpenAI rank/explain OR deterministic rank
+    -> up to 5 direct + 3 related source-linked results
 ```
 
-## AI architecture
+Live search is not part of this critical path. The resident can invoke it separately after indexed results appear.
 
-### 1. Constrained intake extraction
+## Local program data
 
-The server uses the OpenAI Responses API and strict Structured Outputs. Every profile property is required by the schema but nullable, preventing the model from silently omitting fields. The prompt forbids inference of sensitive attributes and instructs the model to return broad bands instead of exact income or age values.
+The source of truth is `data/programs.seed.json`. The build script validates record IDs and HTTPS URLs, creates a deterministic 128-dimensional embedding, and generates `data/programs.seed.sql`. Wrangler stores the seeded D1 database as local SQLite files under `.wrangler/`.
 
-The default model is `gpt-6-luna`, selected for low-latency, cost-efficient structured extraction. The model is configurable with `OPENAI_MODEL`; production snapshots should be pinned after evaluation.
+Each record includes:
 
-### 2. Confidence and abstention
+- identity, level, jurisdiction, city scope, and category;
+- summary, benefit, published eligibility text, and application URL;
+- official source URL, source label, source excerpt, and `lastChecked` date;
+- interest and audience tags;
+- structured constraints for housing, age, income targeting, children, disability, veteran, and caregiver status;
+- precomputed embedding and active status.
 
-The extractor emits a calibrated confidence value and up to three follow-up questions. Missing fields remain unknown. The rules engine maps incomplete evidence to `maybe` rather than inventing an answer. The UI exposes extraction confidence and the most valuable follow-up question.
+## Retrieval and ranking
 
-### 3. Deterministic policy engine
+1. Query active records whose `city_scope` includes the resolved city.
+2. Remove only records contradicted by an explicit resident fact. Missing facts remain unknown.
+3. Embed the constrained profile locally using the same signed feature-hash algorithm used at seed time.
+4. Score cosine similarity plus need, audience, jurisdiction, and income-targeted boosts.
+5. Build a bounded pool of up to ten direct and six related candidates.
+6. If OpenAI is configured, allow it to return only candidate IDs, `matchType`, score, and explanation.
+7. Reject unknown IDs and cap output at five direct and three related records.
 
-Programs use declarative rules. Each operator is pure and unit-tested. Results contain matched rules, failed rules, and missing fields. Ranking combines eligibility state, program impact, and evidence coverage, while status remains strictly rule-derived.
+The embedding implementation uses 128 normalized dimensions with token synonym expansion and bigrams. A hosted vector database is intentionally unnecessary for a 62-row corpus; an in-process scan is faster to operate and easier to demonstrate.
 
-### 4. Evidence-scoped retrieval
+`relevanceScore` is an ordering signal, not an eligibility probability.
 
-The first version uses a local lexical retriever over program names, categories, summaries, and cached official snippets. Retrieval is scoped to curated evidence, so open-ended questions cannot introduce unsupported URLs or amounts. A production extension can add embeddings and reranking while preserving this same source allowlist.
+## AI calls
 
-### 5. Grounded explanation contract
+### Intake extraction
 
-Result copy is generated from the rule trace and source snippet. Future model-generated explanations must receive only the rule outcome and retrieved chunks, return claim-to-source references, and pass a URL allowlist post-check. Unsupported claims must be replaced by “check with the agency.”
+- Model: `OPENAI_MODEL`, default `gpt-6-luna`
+- Input: server-redacted story text
+- Output: strict `UserProfile`, extraction confidence, and optional follow-up questions
+- Fallback: deterministic local extractor
 
-### 6. Live location discovery
+### Indexed ranking and explanation
 
-Discovery starts after the resident submits or skips the optional follow-up form. Each uncached geography uses two `gpt-6-luna` Responses API calls: an official-domain `web_search`, followed by strict-schema ranking against the broad structured profile. The official research is cached for 24 hours by normalized geography only; later residents reuse that research while receiving a fresh profile-aware ranking. Server validation requires HTTPS, an allowlisted host, and a matching search citation. Results already in the curated catalog are removed.
+- Model: `OPENAI_MODEL`, default `gpt-6-luna`
+- Input: derived geography, constrained profile, and a bounded set of complete indexed records
+- Output: record ID, direct/related classification, score, and resident-specific relevance reason
+- Guardrail: the model cannot add a program, URL, amount, eligibility condition, or other program fact
+- Fallback: deterministic local ordering and templated reasons
 
-Live candidates are informational leads. They use the fixed status `unverified` and cannot enter the deterministic eligibility ranking until a human converts the source into a reviewed, versioned rule record.
+### Optional live fallback
 
-## Privacy and security
+- Trigger: only when the resident clicks **Check live sources**
+- Model: `OPENAI_DISCOVERY_MODEL`, then `OPENAI_MODEL`, then `gpt-6-luna`
+- Tool: Responses API `web_search`, constrained to allowed government, utility, and program domains
+- Process: one research call and one strict-schema curation call
+- Validation: HTTPS, allowed host, consulted-source support, duplicate removal, and group caps
+- Failure: indexed results remain on screen
 
-- No account and no server-side resident profile storage.
-- Browser state is limited to `sessionStorage` and disappears with the session.
-- SSNs, likely account numbers, email addresses, phone numbers, and street addresses are replaced before any hosted provider request.
-- The API key is server-side only in `OPENAI_API_KEY`.
-- Hosted intake is rate-limited per edge client address.
-- Inputs are capped at 2,000 characters and never logged by application code.
-- Every follow-up is optional, and the entire follow-up step can be skipped.
-- Live discovery starts only after the resident confirms or skips the optional questions.
-- The discovery model receives only broad structured fields, never the original free-text story.
+### Per-program source-grounded guide
 
-## Evaluation plan
+- Trigger: the resident opens **Explore this** and submits a question about one result
+- Model: `OPENAI_PROGRAM_CHAT_MODEL`, then `OPENAI_DISCOVERY_MODEL`, then `OPENAI_MODEL`, then `gpt-6-luna`
+- Tool: Responses API `web_search` with `tool_choice: required`, current external access, and domains limited to the selected source plus approved government, utility, and program administrators
+- Input: server-retrieved indexed record, allowlisted coarse profile fields, up to eight recent messages for that program, and the current question
+- Output: plain-language guidance or an explicit `FOLLOW_UP_REQUIRED` protocol response, URL-citation annotations, and the consulted-source list; the protocol marker is removed server-side before display
+- Follow-up policy: after searching published rules, ask one focused question containing only the missing non-sensitive fact or closely related facts required to continue; do not repeat answered questions, and provide general guidance when the resident skips
+- Handoff policy: suggest a verified official phone number or website only when the searched pages do not publish the answer, the issue is application/account-specific, or administrator discretion is required
+- Guardrails: no definitive eligibility decision, clear separation of published requirements from unknown user facts, no sensitive identifiers, server-side record lookup, HTTPS/host filtering, per-client rate limiting, and no response storage
+- Client behavior: accessible same-page drawer, separate in-memory conversation per program, distinct follow-up cards, a **Skip this detail** action, adaptive composer guidance, clickable evidence, suggested questions, mobile layout, and previous/next program navigation
+- Failure: the indexed summary, official source, and application link remain available
 
-Create a 30+ persona JSONL set divided across seniors, Veterans, families, renters, homeowners, disability pathways, and deliberately ambiguous profiles. Track:
+### Browser application guide
 
-1. field-level extraction precision, recall, and null accuracy;
-2. exact eligibility status agreement with hand-labeled expectations;
-3. follow-up question utility (expected information gain);
-4. explanation claim support and citation correctness;
-5. hallucinated URL, amount, or deadline rate—target zero;
-6. latency and cost by model;
-7. parity between hosted intake and the guided flow.
+- Runtime: Chrome/Edge Manifest V3 side panel; no API key or model call runs inside the extension
+- Handoff: the web app sends the selected canonical program, safe structured profile, and bounded per-program conversation through a same-page extension bridge into `chrome.storage.local`
+- Permissions: permanent host access only for BenefitBeacon development/hosted origins; each external HTTPS origin is optional and requested only after the resident chooses **Connect to this page**
+- Inspection: visible field label, type, allowed select options, required state, and empty/non-empty completion state; entered values are never returned to the side panel or API
+- Assistance: highlight a field, ask a source-grounded question through the existing server API, or approve a deterministic profile suggestion one field at a time
+- Blocked fields: passwords, uploads, SSN/tax identifiers, bank or account details, PIN/passcodes, signatures, identity-document numbers, full birth dates, and similar sensitive labels
+- Prohibited automation: submit, sign, accept terms, upload, bypass verification, click through the workflow, or make a final eligibility assertion
+- Storage: local browser-profile session, settings, and at most 20 recent messages per program; no server-side form or application state
+- Failure: protected cross-origin frames may not expose their labels; chat and the official application link continue to work
 
-## Next sophistication milestones
+## Result grouping
 
-- Versioned YAML program records with build-time schema validation.
-- Nightly source-change detection with human review before publishing updates.
-- Hybrid BM25 + embedding retrieval and a cross-encoder reranker.
-- Claim-level citation spans and an entailment verifier.
-- Counterfactual explanations: “If housing changes from rent to own, which matches change?”
-- Formal policy provenance: source section, effective date, rule author, reviewer, and change history.
-- Offline local-model provider behind the same `LLMProvider` interface.
+- **Direct:** addresses an explicitly stated need. If no need is stated, an explicit profile fact may support a direct match.
+- **Related:** an adjacent high-value benefit supported by location or another supplied fact.
+- Generic availability alone is not enough for a related result.
+
+## Geography
+
+Sunnyvale ZIP codes `94085`, `94086`, `94087`, and `94089` map directly to the supported city. City names are resolved locally, and other cities are rejected by the resident-facing discovery endpoint. A street address is sent only to the U.S. Census geocoder, then discarded; it is never stored or sent to OpenAI.
+
+## Privacy and storage
+
+- No resident account or server-side resident-profile database
+- Browser profile state limited to `sessionStorage`
+- Common identifiers, emails, phone numbers, and street-address patterns redacted before hosted intake
+- Discovery receives broad structured fields, not the original story
+- API keys remain server-side
+- Local SQLite contains public program records only
+- Optional live-research cache keys use normalized geography and coarse profile signals
+
+## Failure behavior
+
+| Failure | Behavior |
+|---|---|
+| Hosted intake unavailable | Continue with local extraction and optional questions |
+| Indexed ranking call unavailable | Continue with deterministic local ranking |
+| Live fallback unavailable | Preserve indexed results and show a non-destructive error |
+| Address geocoder unavailable | Ask for city/state or ZIP |
+| Local database missing | Instruct operator to run `npm run db:seed` |
+| Candidate contradicts an explicit fact | Exclude it before AI ranking |
+
+## Quality gates
+
+Automated checks cover dataset size and uniqueness, supported-city coverage, HTTPS sources, embedding determinism and relevance, geography normalization, source validation, rendered accessibility/PWA metadata, and production compilation. Before the presentation, re-open high-priority source pages, update each changed record and its `lastChecked` date, reseed, and rerun the suite.

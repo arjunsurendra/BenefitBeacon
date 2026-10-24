@@ -1,18 +1,21 @@
 # BenefitBeacon Architecture and Technical Design
 
-**Status:** Implemented local application  
-**Version:** 1.0  
-**Updated:** October 8, 2026  
-**Primary scope:** Sunnyvale, Santa Clara County, California, and federal benefit programs
+**Status:** Implemented local congressional-app demonstration
+**Version:** 3.1
+**Updated:** October 23, 2026
+**Scope:** Sunnyvale, plus applicable county, California, federal, utility, and program-administrator benefits
 
-## 1. Purpose and architectural position
+## 1. Architecture goals
 
-BenefitBeacon is a responsive benefits-navigation application that turns one free-text description into a structured resident profile, asks optional questions for missing high-value facts, and produces a final list from two intentionally separate sources:
+BenefitBeacon is a responsive benefits navigator that turns one plain-language story into a short, source-linked list of programs. Its architecture prioritizes:
 
-1. **Reviewed programs** are evaluated by deterministic, testable eligibility rules and receive `likely`, `maybe`, or `unlikely` statuses.
-2. **Live discoveries** are found from allowlisted official websites and ranked for relevance by an LLM. They remain `unverified` and never receive an eligibility determination.
+- **Demo reliability:** the core result path is local and survives OpenAI or web-search failure.
+- **Freshness evidence:** every result retains an official source and `Last checked` date.
+- **Conservative AI:** models understand the resident, ask optional questions, rank known records, and explain relevance; they do not invent program facts or decide eligibility.
+- **Privacy:** raw stories are redacted before hosted processing, and resident profiles are not persisted server-side.
+- **Accessibility:** the same PWA works on desktop and mobile with large type, strong contrast, keyboard support, reduced motion, and optional extra-large text.
 
-The central architecture decision is that AI may extract, search, summarize, and rank, but it may not make an authoritative eligibility decision. Eligibility estimates for reviewed programs come only from the local rule engine. Final eligibility always belongs to the administering agency.
+The current resident experience exposes 52 records serving Sunnyvale, checked shortly before the presentation. The underlying schema remains ready for future city expansion. A relevance score orders informational leads; the administering program alone determines eligibility.
 
 ## 2. System context
 
@@ -20,544 +23,410 @@ The central architecture decision is that AI may extract, search, summarize, and
 flowchart LR
     Resident["Resident on web or mobile"]
     App["BenefitBeacon PWA"]
-    IntakeAPI["POST /api/intake"]
-    DiscoveryAPI["POST /api/discover"]
+    Intake["Intake API"]
+    Discover["Discovery API"]
+    Guide["Program Guide API"]
+    DB[("Local D1 / SQLite\n62 program records")]
     OpenAI["OpenAI Responses API"]
     Census["U.S. Census Geocoder"]
-    Sources["Allowlisted official program sites"]
-    Catalog["Reviewed local program catalog"]
+    Sources["Official and trusted source sites"]
 
-    Resident -->|"Situation and optional answers"| App
-    App -->|"Redacted free text"| IntakeAPI
-    IntakeAPI -->|"Structured extraction"| OpenAI
-    App -->|"Normalized profile"| Catalog
-    App -->|"Geography and broad profile"| DiscoveryAPI
-    DiscoveryAPI -->|"Full address only when supplied"| Census
-    DiscoveryAPI -->|"Derived geography and broad profile"| OpenAI
-    OpenAI -->|"Domain-filtered web search"| Sources
-    Catalog -->|"Rule outcomes and evidence"| App
-    DiscoveryAPI -->|"Validated live candidates"| App
-    App -->|"Reviewed matches and live findings"| Resident
+    Resident -->|"Story and optional answers"| App
+    App -->|"Redacted story"| Intake
+    Intake -. "Optional structured extraction" .-> OpenAI
+    App -->|"Constrained profile and location"| Discover
+    Discover --> DB
+    Discover -. "Optional rank and explain" .-> OpenAI
+    Discover -. "Street address only" .-> Census
+    App -. "Resident requests live fallback" .-> Discover
+    Discover -. "Optional web search" .-> OpenAI
+    App -. "Explore this question" .-> Guide
+    Guide --> DB
+    Guide -. "Required source-grounded web search" .-> OpenAI
+    OpenAI -.-> Sources
+    Discover -->|"Source-linked results"| App
 ```
 
-## 3. Runtime and deployment architecture
+Solid arrows form the reliable local path. Dashed arrows are optional network enrichments or narrowly scoped external services.
+
+## 3. Runtime components
 
 ```mermaid
 flowchart TB
-    Browser["Browser or installed PWA"]
-
-    subgraph Worker["Cloudflare Worker compatible application"]
-        Router["Vinext application router"]
-        Page["React server-rendered page"]
-        Client["BenefitBeaconApp client state machine"]
-        Intake["Edge intake route"]
-        Discover["Edge discovery route"]
-        Rules["Deterministic rule engine"]
-        Data["Static reviewed program records"]
-        Cache["Per-isolate in-memory maps"]
+    subgraph Client["Resident device"]
+        UI["BenefitBeaconApp state machine"]
+        Session["sessionStorage profile"]
+        SW["Service worker and app shell"]
     end
 
-    Assets["Static assets and service worker"]
+    subgraph Edge["Vinext / Cloudflare Worker-compatible server"]
+        Router["App Router"]
+        IntakeAPI["POST /api/intake"]
+        DiscoveryAPI["POST /api/discover"]
+        GuideAPI["POST /api/program-chat"]
+        Redactor["PII redactor"]
+        LocalExtractor["Local intake extractor"]
+        Geo["Geography normalizer"]
+        Retriever["Structured filters + vector retrieval"]
+        Ranker["AI ranker or deterministic fallback"]
+        LiveGuard["Live source validator"]
+    end
+
+    DB[("D1 binding\nlocal SQLite")]
     Provider["OpenAI Responses API"]
     Census["Census Geocoder"]
 
-    Browser <-->|"HTML, RSC, JS, CSS"| Router
-    Router --> Page
-    Page --> Client
-    Browser <-->|"Network-first non-API GET"| Assets
-    Client --> Intake
-    Client --> Discover
-    Client --> Rules
-    Rules --> Data
-    Intake --> Cache
-    Discover --> Cache
-    Intake --> Provider
-    Discover --> Provider
-    Discover --> Census
+    UI <--> Session
+    UI <--> SW
+    UI --> Router
+    Router --> IntakeAPI
+    Router --> DiscoveryAPI
+    Router --> GuideAPI
+    IntakeAPI --> Redactor
+    IntakeAPI --> LocalExtractor
+    Redactor -.-> Provider
+    DiscoveryAPI --> Geo
+    Geo -. "address only" .-> Census
+    DiscoveryAPI --> Retriever
+    Retriever --> DB
+    Retriever --> Ranker
+    Ranker -.-> Provider
+    DiscoveryAPI -. "explicit fallback" .-> LiveGuard
+    LiveGuard -.-> Provider
+    GuideAPI --> DB
+    GuideAPI -. "required web search" .-> Provider
 ```
 
-The application uses Next.js-compatible App Router conventions, React 19, TypeScript, Vinext, Vite, and the Cloudflare Vite plugin. The worker entry point delegates ordinary requests to the Vinext router and supports Cloudflare image transformation when requested.
+The application uses React 19, TypeScript, Next.js-compatible App Router conventions, Vinext, Vite, Wrangler, Cloudflare D1, and SQLite-compatible SQL.
 
-Current hosting configuration does not enable D1 or R2. The database scaffolding exists but is not part of the active request path. Resident profiles are not stored in a server database.
-
-## 4. Source layout and component responsibilities
+## 4. Component responsibilities
 
 | Component | Location | Responsibility |
 |---|---|---|
-| Application page | `app/page.tsx` | Mounts the BenefitBeacon client application. |
-| Client experience | `components/BenefitBeaconApp.tsx` | Controls home, analysis, optional follow-up, and result states; merges optional answers; invokes APIs; evaluates reviewed programs; renders results. |
-| Intake API | `app/api/intake/route.ts` | Validates and rate-limits free text, redacts sensitive patterns, calls Structured Outputs, and returns a constrained `UserProfile`. |
-| Discovery API | `app/api/discover/route.ts` | Normalizes geography, searches official sources, performs profile-aware extraction, validates citations and URLs, deduplicates candidates, and returns live findings. |
-| Local extractor | `lib/intake/local-extractor.ts` | Provides a no-model fallback for common location, age, income, household, housing, military, employment, utility, and interest signals. |
-| PII redactor | `lib/privacy/redact.ts` | Removes SSNs, likely account/card numbers, email addresses, phone numbers, and common street-address patterns before hosted intake. |
-| Rule engine | `lib/rules/engine.ts` | Evaluates declarative program rules, calculates status and score, and returns an auditable rule trace. |
-| Discovery validation | `lib/discovery.ts` | Resolves local geography conventions, enforces the domain allowlist and HTTPS, cleans URLs, validates citations, and removes duplicates. |
-| Program catalog | `data/programs.ts` | Stores ten reviewed city, county, state, and federal program records with sources, rules, steps, and verification dates. |
-| Shared contracts | `lib/types.ts` | Defines resident profiles, reviewed programs, rules, results, geography, live candidates, and API responses. |
-| Service worker | `public/sw.js` | Provides network-first caching for non-API GET requests and an offline application-shell fallback. |
-| Worker entry | `worker/index.ts` | Connects the built application to the Cloudflare Worker runtime. |
-| Tests | `tests/` | Covers rule operators, deterministic ranking, discovery privacy and URL controls, SSR output, and PWA metadata. |
+| Client experience | `components/BenefitBeaconApp.tsx` | Intake, optional follow-ups, grouped results, same-page per-program conversations, explicit live fallback, sharing, printing, and accessibility preferences |
+| Intake API | `app/api/intake/route.ts` | Length validation, rate limiting, redaction, strict profile extraction, and follow-up generation |
+| Discovery API | `app/api/discover/route.ts` | Geography resolution, indexed retrieval, guarded AI ranking, deterministic fallback, and optional live-search orchestration |
+| Program Guide API | `app/api/program-chat/route.ts` | Server-side program lookup, history/profile limits, forced source-grounded web search, citation extraction, source filtering, and rate limiting |
+| Indexed retrieval | `lib/indexed-programs.ts` | City-scoped SQL query, contradiction filtering, similarity scoring, structured boosts, and group caps |
+| Local embeddings | `lib/local-vector.ts` | Deterministic 128-dimensional feature-hash embedding, synonym expansion, bigrams, normalization, and cosine similarity |
+| Source/geography controls | `lib/discovery.ts` | ZIP/city normalization, Census result parsing, allowed domains, cache keys, live-candidate validation, and deduplication |
+| Program schema | `db/schema.ts` | SQLite/D1 schema for program facts, targeting fields, vector, source, and freshness metadata |
+| Seed builder | `scripts/build-program-seed.ts` | Dataset validation, vector precomputation, and deterministic SQL generation |
+| Source dataset | `data/programs.seed.json` | Human-reviewable authoritative program snapshot |
+| Database migration | `migrations/0001_program_index.sql` | Programs table and query indexes |
+| Shared contracts | `lib/types.ts` | Profile, geography, indexed/live program, and API response types |
+| Service worker | `public/sw.js` | Network-first non-API caching and offline shell fallback |
 
-## 5. Client interaction flow
+## 5. Data preparation flow
 
-The client is a small state machine with four views: `home`, `analyzing`, `followup`, and `results`.
+The corpus is curated shortly before the presentation rather than scraped during a resident interaction.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Home
-    Home --> Analyzing: Submit situation
-    Analyzing --> Followup: Important fields are missing
-    Analyzing --> Results: Profile is sufficiently complete
-    Followup --> Analyzing: Submit optional answers
-    Followup --> Analyzing: Skip all optional answers
-    Analyzing --> Results: Reviewed matching and live discovery finish
-    Results --> Home: Start over
+flowchart LR
+    Sources["Official city, county, state, federal, utility, and administrator pages"]
+    Review["Human source review"]
+    JSON["programs.seed.json"]
+    Validate["Schema, ID, HTTPS, and duplicate validation"]
+    Embed["Precompute 128-D local embeddings"]
+    SQL["programs.seed.sql"]
+    SQLite[("Local D1 / SQLite")]
+
+    Sources --> Review
+    Review -->|"Facts + URL + lastChecked"| JSON
+    JSON --> Validate
+    Validate --> Embed
+    Embed --> SQL
+    SQL --> SQLite
 ```
 
-The initial screen intentionally presents one main text area and one primary action. After extraction, the application asks only about missing fields that can improve reviewed or live matching. Every field can remain blank, and the entire follow-up step can be skipped.
+`npm run db:seed` runs this pipeline and loads Wrangler’s local D1 state. The generated SQLite state lives under ignored `.wrangler/`; the reviewed JSON and generated SQL remain reproducible project artifacts.
 
-Follow-up fields can include:
-
-- city, state, or ZIP;
-- age range and household size;
-- broad household income band;
-- housing and children in the household;
-- employment, Veteran, and active-duty status;
-- disability and caregiver status;
-- utility-bill pressure and home age;
-- assistance interests such as food, health, housing, utilities, child care, transportation, home repair, and employment.
-
-## 6. End-to-end request flow
-
-### 6.1 Intake and reviewed matching
+## 6. Resident request flow
 
 ```mermaid
 sequenceDiagram
     actor Resident
-    participant UI as BenefitBeaconApp
-    participant Local as Local extractor
-    participant Intake as POST /api/intake
-    participant Redactor as PII redactor
-    participant LLM as OpenAI Responses API
-    participant Rules as Rule engine
-    participant Catalog as Reviewed catalog
+    participant UI as BenefitBeacon PWA
+    participant Intake as Intake API
+    participant AI as OpenAI
+    participant Discover as Discovery API
+    participant DB as Local SQLite
 
-    Resident->>UI: Submit free-text situation
-    UI->>Local: Extract fallback profile immediately
-    UI->>Intake: Send free text
-    Intake->>Intake: Validate length and rate limit
-    Intake->>Redactor: Remove sensitive patterns
-    Redactor-->>Intake: Redacted text
-    Intake->>LLM: Strict JSON Schema extraction
-    alt OpenAI extraction succeeds
-        LLM-->>Intake: UserProfile, confidence, follow-ups
-        Intake-->>UI: Structured intake response
-    else OpenAI is unavailable
-        UI->>UI: Keep local fallback profile
+    Resident->>UI: Describe situation
+    UI->>Intake: Story text
+    Intake->>Intake: Validate and redact
+    opt OpenAI configured and available
+        Intake->>AI: Strict profile extraction
+        AI-->>Intake: Explicit facts and optional questions
     end
-    UI->>Resident: Show optional missing-field questions
-    Resident->>UI: Answer any fields or skip
-    UI->>Rules: Evaluate merged profile
-    Rules->>Catalog: Read reviewed programs
-    Catalog-->>Rules: Rules and official evidence
-    Rules-->>UI: Ranked EligibilityResult records
+    Intake-->>UI: AI or local fallback profile
+    opt Helpful details are missing
+        UI-->>Resident: Show skippable follow-ups
+        Resident->>UI: Answer any or skip all
+    end
+    UI->>Discover: Location and constrained profile
+    Discover->>DB: Query active records for resolved city
+    DB-->>Discover: Indexed program rows
+    Discover->>Discover: Remove explicit contradictions
+    Discover->>Discover: Vector similarity + structured boosts
+    opt OpenAI configured and available
+        Discover->>AI: Rank supplied record IDs and explain
+        AI-->>Discover: IDs, group, score, reason
+    end
+    Discover->>Discover: Validate IDs and cap 5 + 3
+    Discover-->>UI: Indexed results
+    UI-->>Resident: Official links and last-checked dates
 ```
 
-The client creates a local fallback before calling the server. If hosted intake fails, the resident can still continue through optional questions and reviewed matching.
+The deterministic route always exists: local extraction, local retrieval, local ordering, and templated explanations.
 
-### 6.2 Live official-source discovery
+## 7. Indexed retrieval design
+
+### 7.1 Structured filtering
+
+Hard exclusions are deliberately narrow. A record is removed only when an explicit supplied fact contradicts a requirement, such as a renter requesting an owner-only rebate or an explicit non-veteran profile encountering a veteran-only program. Unknown fields never become negative evidence.
+
+### 7.2 Semantic matching
+
+At seed time, searchable record text is transformed into a normalized 128-dimensional signed feature-hash vector. The same local function embeds the profile and geography at request time. Token synonym expansion and bigrams improve recall for common benefit vocabulary such as utility bills, food support, accessibility, and rebates.
+
+For 62 rows, a JavaScript cosine scan is simpler and more reliable than a vector extension or hosted vector service. It also keeps all normal retrieval offline.
+
+### 7.3 Scoring
+
+The deterministic score combines:
+
+- cosine similarity;
+- overlap with explicitly stated need tags;
+- audience matches such as senior, homeowner, renter, caregiver, veteran, disability, or household with children;
+- jurisdiction preference for local programs;
+- a small boost when an income-targeted program matches a supplied non-high income band.
+
+The score is clamped to 1–100 and is used only for ordering.
+
+### 7.4 AI ranking boundary
+
+The ranking call receives a bounded pool of complete indexed records and can return only:
+
+- an existing record ID;
+- `direct` or `related`;
+- a relevance score;
+- a resident-specific explanation.
+
+Unknown IDs are discarded. All program names, descriptions, amounts, eligibility text, official URLs, and freshness dates come from SQLite and cannot be changed by the model.
+
+## 8. Optional live fallback
+
+Live search is a resident-invoked enhancement, not a hidden dependency.
 
 ```mermaid
 sequenceDiagram
-    participant UI as BenefitBeaconApp
-    participant API as POST /api/discover
-    participant Geo as Geography resolver
-    participant Cache as Research cache
-    participant LLM as OpenAI Responses API
-    participant Web as Official websites
-    participant Guard as Candidate validator
+    actor Resident
+    participant UI as Results UI
+    participant API as Discovery API
+    participant AI as OpenAI Responses API
+    participant Web as web_search
+    participant Guard as Source validator
 
-    UI->>API: Location and broad UserProfile
-    API->>API: Rate limit and whitelist profile fields
-    API->>Geo: Normalize city or ZIP
-    opt Full street address supplied directly to the API
-        Geo->>Geo: Resolve through Census Geocoder
-        Geo->>Geo: Discard original address
+    Resident->>UI: Click Check live sources
+    UI->>API: Same constrained profile + liveFallback=true
+    API->>AI: Search request with allowed domains
+    AI->>Web: Up to four targeted searches
+    Web-->>AI: Current pages and source metadata
+    AI-->>API: Research and consulted URLs
+    API->>AI: Strict candidate curation
+    AI-->>API: Structured candidates
+    API->>Guard: HTTPS, host, evidence, and duplicate checks
+    alt Valid live candidates
+        Guard-->>UI: Up to 5 direct + 3 related live results
+    else Timeout, API error, or no evidence
+        API-->>UI: Non-destructive error
+        UI-->>Resident: Keep indexed results visible
     end
-    Geo-->>API: Derived city, county, state, ZIP, district
-    API->>Cache: Read by normalized geography key
-    alt Fresh research is not cached
-        API->>LLM: Search request with allowed domains
-        LLM->>Web: Web search
-        Web-->>LLM: Official pages
-        LLM-->>API: Research text and URL citations
-        API->>Cache: Store research and citations for 24 hours
-    else Research is cached
-        Cache-->>API: Research text and citations
+```
+
+The live research cache lasts up to 24 hours in process and is keyed by normalized geography, sanitized needs, and coarse profile signals—not the raw story.
+
+### Per-program guide flow
+
+```mermaid
+sequenceDiagram
+    actor Resident
+    participant Drawer as In-page guide drawer
+    participant API as Program Guide API
+    participant DB as Local D1 / SQLite
+    participant AI as OpenAI Responses API
+    participant Web as web_search
+
+    Resident->>Drawer: Click Explore this and ask a question
+    Drawer->>API: Program ID, current question, bounded history, constrained profile
+    API->>DB: Load active program by ID
+    DB-->>API: Canonical indexed record and official URL
+    API->>AI: Record + question, web_search required, allowed domains
+    AI->>Web: Search current official and trusted sources
+    Web-->>AI: Pages, citations, and consulted-source metadata
+    AI-->>API: Cited answer or follow-up-required marker
+    API->>API: Keep HTTPS URLs on allowed hosts
+    alt Missing resident fact affects answer
+        API-->>Drawer: Focused optional follow-up + searched sources
+        Drawer-->>Resident: Ask for the minimum useful detail or offer Skip
+        Resident->>Drawer: Reply or decline
+        Drawer->>API: Reply with bounded program conversation
+    else Published answer is supportable
+        API-->>Drawer: Answer, citation spans, sources, model, search time
+        Drawer-->>Resident: Same-page answer with clickable evidence
+    else Published sources cannot resolve it
+        API-->>Drawer: Limitation + verified last-resort contact or official page
     end
-    API->>LLM: Broad profile plus cited research and strict schema
-    LLM-->>API: Ranked candidate records
-    API->>Guard: Validate HTTPS, domain, citation, and duplicates
-    Guard-->>API: Up to eight candidates
-    API-->>UI: DiscoveryResponse
 ```
 
-An uncached discovery makes two Responses API calls: one domain-filtered web search and one structured ranking call. A cached geography reuses the search research and makes only the structured ranking call. Intake is a separate Responses API call, so a complete uncached session normally uses three model calls.
+The browser keeps a separate in-memory conversation for each opened program so the resident can move between results without losing context. The guide searches before deciding whether it can answer, needs one more resident detail, or must provide a verified handoff. It does not use contact information as a substitute for asking an answerable follow-up. The original free-text story is not sent to this endpoint.
 
-## 7. AI responsibilities and constraints
+### Guided application extension flow
 
-### 7.1 Intake extraction
+```mermaid
+sequenceDiagram
+    actor Resident
+    participant WebApp as BenefitBeacon web app
+    participant Bridge as Extension handoff bridge
+    participant Panel as Browser side panel
+    participant Form as Official application page
+    participant API as Program Guide API
 
-The intake model defaults to `gpt-6-luna` with low reasoning effort. It receives redacted free text and must return a strict object in which every schema property is present but may be `null`. The server strips `null` values before returning the profile.
-
-The intake model may:
-
-- normalize explicitly stated information;
-- map exact age and income statements to broad bands;
-- report extraction confidence;
-- suggest up to three useful follow-up questions.
-
-It may not:
-
-- infer sensitive traits or unstated conditions;
-- decide benefit eligibility;
-- return arbitrary fields outside the schema.
-
-### 7.2 Live search and ranking
-
-The discovery model defaults to `OPENAI_DISCOVERY_MODEL`, falling back to `OPENAI_MODEL` and then `gpt-6-luna`.
-
-The first discovery call searches only allowlisted public-agency and program domains. The second call receives:
-
-- derived geography;
-- a whitelisted broad resident profile;
-- the research text;
-- the search citation URLs.
-
-It returns a strict list of up to eight candidate programs with a relevance reason and relevance score. The score is a ranking signal, not an eligibility probability.
-
-### 7.3 Deterministic eligibility boundary
-
-Only reviewed `Program` records can enter the rule engine. A live result cannot receive `likely`, `maybe`, or `unlikely` until it is reviewed and converted into a curated program record with explicit rules and evidence.
-
-## 8. Rule engine design
-
-Each reviewed program declares three optional rule groups:
-
-- `all`: every rule must pass;
-- `any`: at least one rule must pass;
-- `not`: no rule may pass.
-
-Supported operators are `eq`, `in`, `in_list`, `gte`, `lte`, and `between`. Each evaluation produces `pass`, `fail`, or `unknown`.
-
-Status calculation is deterministic:
-
-| Condition | Status |
-|---|---|
-| An `all` rule fails, every `any` rule fails, or a `not` rule passes | `unlikely` |
-| No decisive failure exists but required evidence is missing | `maybe` |
-| Required conditions are supported without missing decisive evidence | `likely` |
-
-Ranking combines the program's manually assigned impact score, the status weight, and rule coverage. The result also contains `matchedRules`, `failedRules`, and `missingInfo`, enabling the UI to display an eligibility trace.
-
-## 9. Core data contracts
-
-### 9.1 UserProfile
-
-`UserProfile` stores broad, optional fields rather than exact documents or account identifiers. Its main categories are:
-
-| Category | Fields |
-|---|---|
-| Geography | `zip`, `city`, `state` |
-| Household | `ageRange`, `householdSize`, `childrenAges` |
-| Financial and housing | `incomeBand`, `housing`, `homeAgeYears`, `hasHighWaterBill` |
-| Status | `veteran`, `activeDuty`, `disabled`, `caregiver`, `employment` |
-| Preferences | `interests`, `language` |
-
-### 9.2 Reviewed Program
-
-A reviewed program contains identity, jurisdiction, category, summary, benefit, declarative eligibility rules, application steps, an official source, a source excerpt, a verification date, and an impact score.
-
-### 9.3 EligibilityResult
-
-An eligibility result contains the reviewed program, deterministic status, numeric ranking score, matched rules, failed rules, and missing information.
-
-### 9.4 DiscoveredProgram
-
-A live candidate contains program details, published eligibility text, official source and application URLs, source evidence, a relevance reason, a relevance score, discovery time, and the fixed status `unverified`.
-
-## 10. API contracts
-
-### 10.1 POST /api/intake
-
-Request:
-
-```json
-{
-  "text": "I am retired, rent in Sunnyvale, and need help with utility bills."
-}
+    Resident->>WebApp: Choose Apply with BenefitBeacon
+    WebApp->>Bridge: Selected record, coarse profile, bounded conversation
+    Bridge->>Panel: Store local application session
+    WebApp->>Form: Open official application URL
+    Resident->>Panel: Open extension and approve this site
+    Panel->>Form: Scan visible labels, options, required flags, completion state
+    Form-->>Panel: Structure only; no entered values
+    Resident->>Panel: Highlight, ask, or approve one safe suggestion
+    opt Ask about a field
+        Panel->>API: Program context and question
+        API-->>Panel: Source-grounded guidance
+    end
+    opt Approve a safe suggestion
+        Panel->>Form: Fill the selected non-sensitive field
+        Form-->>Resident: Resident reviews and continues manually
+    end
 ```
 
-Constraints:
+The Manifest V3 extension uses a side panel, a narrow handoff content script on BenefitBeacon, and an on-demand form guide injected only after the resident grants access to the active official site. The guide can highlight visible fields and fill only a small deterministic allowlist of coarse profile facts. It blocks sensitive identifiers and file inputs, never reads entered values beyond an empty/non-empty completion flag, and has no submit, signature, consent, verification-bypass, or navigation command.
 
-- text length must be between 8 and 2,000 characters;
-- maximum 12 requests per 60 seconds per derived client identifier and runtime isolate;
-- the API key remains server-side.
+## 9. Data contracts
 
-Success response:
+### UserProfile
 
-```json
-{
-  "profile": {
-    "city": "sunnyvale",
-    "state": "CA",
-    "housing": "rent",
-    "employment": "retired",
-    "hasHighWaterBill": true
-  },
-  "confidence": 0.93,
-  "followUpQuestions": [
-    "What is your age range?",
-    "What is your broad household income range?"
-  ],
-  "mode": "openai",
-  "model": "gpt-6-luna",
-  "redacted": false
-}
-```
+Broad optional fields include city, state, ZIP, age range, household size, children’s age bands, income band, housing, military connection, disability, caregiver status, employment, home age, utility pressure, interests, and language.
 
-### 10.2 POST /api/discover
+### Program record
 
-Request:
+An indexed program contains identity, jurisdiction, city scope, category, summary, benefit, published eligibility text, application link, source link, source evidence, matching tags, structured restrictions, vector, freshness date, and active status.
 
-```json
-{
-  "location": "Sunnyvale, CA",
-  "profile": {
-    "city": "sunnyvale",
-    "state": "CA",
-    "ageRange": "65plus",
-    "incomeBand": "25-50k",
-    "housing": "rent",
-    "veteran": true,
-    "interests": ["utilities", "health"]
-  }
-}
-```
+### DiscoveryResponse
 
-Constraints:
+The API returns derived geography, candidates, response mode (`indexed`, `indexed-ai`, or `live-fallback`), optional model, request timestamp, normalized cache key, address-discarded flag, indexed-row count, and whether live fallback is available.
 
-- location is limited to 180 normalized characters;
-- maximum 6 requests per 60 seconds per derived client identifier and runtime isolate;
-- only recognized `UserProfile` fields are forwarded;
-- candidate count is capped at eight;
-- URLs must use HTTPS and match an allowlisted host.
-
-Success response shape:
-
-```json
-{
-  "geography": {
-    "label": "Sunnyvale, Santa Clara County, CA",
-    "city": "Sunnyvale",
-    "county": "Santa Clara County",
-    "state": "California",
-    "stateCode": "CA"
-  },
-  "candidates": [],
-  "mode": "openai",
-  "model": "gpt-6-luna",
-  "searchedAt": "2026-10-08T21:09:21.470Z",
-  "cacheKey": "sunnyvale|santa-clara-county|ca",
-  "cached": false,
-  "addressDiscarded": false
-}
-```
-
-## 11. Discovery validation pipeline
-
-Live candidates pass through the following controls before reaching the client:
-
-1. Reject incomplete candidates without a name, source URL, summary, or published eligibility text.
-2. Require HTTPS.
-3. Require an exact allowlisted hostname or a subdomain of an allowlisted hostname.
-4. Require supporting search citations. The current validator accepts the exact cited URL or another URL on a cited host.
-5. Remove `utm_*` parameters and fragments.
-6. Replace an invalid application URL with the validated source URL.
-7. Remove programs already represented by a reviewed name or source/application URL.
-8. Remove duplicates within the response.
-9. Sort by relevance score and return at most eight records.
-
-The domain allowlist includes relevant municipal, Santa Clara County, California, and federal domains. City-specific domains are prioritized when the city is known.
-
-## 12. Privacy, trust boundaries, and security
+## 10. Privacy and trust boundaries
 
 ```mermaid
 flowchart LR
     subgraph Device["Resident device"]
-        Story["Raw situation text"]
-        Session["sessionStorage profile and session state"]
+        Story["Raw story"]
+        Session["Session-only profile"]
     end
 
-    subgraph AppBoundary["BenefitBeacon server boundary"]
-        Validate["Input validation and rate limiting"]
-        Redact["Pattern-based redaction"]
+    subgraph App["BenefitBeacon boundary"]
+        Limits["Length and rate limits"]
+        Redact["Sensitive-pattern redaction"]
         Whitelist["Profile field whitelist"]
-        URLGuard["HTTPS, domain, citation, duplicate checks"]
-        Memory["Geography research cache"]
+        SQLite[("Public program data only")]
+        Validate["Record-ID and source validation"]
     end
 
-    subgraph External["External processors"]
+    subgraph External["External services"]
         OpenAI["OpenAI API"]
         Census["Census Geocoder"]
-        Official["Official program websites"]
+        Web["Allowed source sites"]
     end
 
-    Story --> Validate --> Redact --> OpenAI
-    Session --> Whitelist --> OpenAI
-    Story -. "full address only when API receives one" .-> Census
-    OpenAI --> Official
-    OpenAI --> URLGuard
-    URLGuard --> Device
-    Official --> Memory
+    Story --> Limits --> Redact -.-> OpenAI
+    OpenAI -.-> Session
+    Session --> Whitelist --> SQLite
+    SQLite --> Validate
+    Whitelist -. "rank only" .-> OpenAI
+    Whitelist -. "street address only" .-> Census
+    OpenAI -. "explicit live fallback" .-> Web
+    OpenAI -. "program question; search required" .-> Web
 ```
 
-Security controls currently implemented:
+Key invariants:
 
-- no resident account or server-side profile database;
-- server-side API key usage only;
-- server-side free-text redaction before hosted intake;
-- strict Structured Outputs for both model extraction paths;
-- input length limits and per-isolate rate limiting;
-- broad value bands rather than exact income or age storage;
-- original free-text story excluded from discovery requests;
-- official-domain filtering during web search;
-- post-model HTTPS, hostname, citation, and duplicate validation;
-- API requests excluded from service-worker caching;
-- live results visibly marked for eligibility confirmation.
+- API keys remain server-side.
+- The discovery route never receives the original story.
+- Street addresses are sent only to Census and discarded after geography resolution.
+- Resident profiles are not stored in SQLite.
+- Missing resident information stays unknown rather than inferred.
+- AI output never grants or denies eligibility.
+- Every displayed record retains a source and freshness date.
+- Program-guide answers can cite only HTTPS pages on the selected or approved domains.
 
-The raw story and normalized session data can exist in browser memory, and the final profile and story are stored in `sessionStorage` for the browser session. The application does not intentionally log intake or address text.
+## 11. Persistence and caching
 
-## 13. Caching and persistence
+| Data | Storage | Lifetime |
+|---|---|---|
+| Authoritative program snapshot | Project JSON and generated SQL | Until reviewed refresh |
+| Local program database | Wrangler D1 / SQLite under `.wrangler/` | Until reseeded or local state removed |
+| Resident profile | Browser `sessionStorage` | Browser session |
+| Optional live research | Edge-process `Map` | Up to 24 hours or process eviction |
+| Per-program conversation | Browser memory | Current page session; cleared on start over or reload |
+| Rate counters | Edge-process `Map` | 60 seconds or process eviction |
+| PWA shell | Browser Cache Storage | Until service-worker replacement |
 
-| Data | Storage | Lifetime | Key |
-|---|---|---|---|
-| Resident session | Browser `sessionStorage` | Browser session | `benefitbeacon-session` |
-| Official search research | Edge process `Map` | Up to 24 hours or process eviction | Normalized city, county, state, and ZIP |
-| Rate-limit counters | Edge process `Map` | 60-second window or process eviction | Client-derived address header |
-| PWA shell | Browser Cache Storage | Until service-worker cache replacement | Request URL |
-| Reviewed program records | Application bundle | Build lifetime | Program ID |
-
-The discovery cache stores research and citation URLs, not resident profiles. Because the cache is in memory, it is isolated to a runtime instance, not durable, and not guaranteed to be shared across Cloudflare isolates.
-
-## 14. Resilience and failure behavior
-
-The application is designed to preserve reviewed matching when optional network capabilities fail.
+## 12. Failure behavior
 
 | Failure | Behavior |
 |---|---|
-| Hosted intake fails | Continue with the local extractor and optional follow-up form. |
-| No location supplied | Skip live discovery and show reviewed matches. |
-| Census cannot resolve an address | Return a location-specific error and suggest city/state or ZIP. |
-| OpenAI key missing or rejected | Return an actionable configuration error. |
-| Model or web-search access denied | Return an access-specific error. |
-| Provider rate or usage limit | Return HTTP 429 with a billing/limit message. |
-| Live research or extraction fails | Show reviewed matches and a non-blocking live-search message. |
-| Invalid or uncited candidate | Drop it before the response. |
-| Network unavailable after installation | Serve the cached non-API application shell; network APIs remain unavailable. |
+| OpenAI intake failure | Continue with local extraction and optional questions |
+| OpenAI ranking failure or timeout | Continue with deterministic local ranking |
+| Missing API key | Core indexed experience remains available |
+| Live-search failure | Keep indexed results and show a non-destructive message |
+| Program-guide search failure | Keep the drawer open with the indexed summary and direct official source link |
+| Unsupported city | Return no indexed rows rather than invent broader coverage |
+| Census unavailable | Ask for Sunnyvale or a supported Sunnyvale ZIP |
+| Local database absent | Return an operator message to run `npm run db:seed` |
+| Invalid or contradictory candidate | Remove it before display |
+| Offline device | Load cached application shell; local server APIs still require connectivity to the server |
 
-## 15. Progressive web application behavior
+## 13. Accessibility
 
-The application manifest enables standalone installation and defines BenefitBeacon branding. The service worker uses a network-first strategy for non-API GET requests:
+The interface includes large default typography, 44–56px controls, semantic landmarks, visible keyboard focus, screen-reader status regions, explicit labels, high-contrast mode, reduced-motion support, responsive reflow, and an extra-large-text option. Follow-ups are optional and skippable, and the initial page retains one primary input and one primary action.
 
-1. fetch the current resource from the network;
-2. cache a successful copy;
-3. if the network fails, return the cached request;
-4. if the exact request is absent, return the cached root application shell.
-
-API requests are deliberately excluded to prevent benefit profiles or provider responses from entering the service-worker cache.
-
-## 16. Configuration
-
-Server-side environment variables:
+## 14. Configuration
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `OPENAI_API_KEY` | For hosted AI features | Authenticates server-to-server Responses API calls. |
-| `OPENAI_MODEL` | Optional | Intake model; defaults to `gpt-6-luna`. |
-| `OPENAI_DISCOVERY_MODEL` | Optional | Discovery model; falls back to `OPENAI_MODEL`, then `gpt-6-luna`. |
+| `OPENAI_API_KEY` | No | Enables hosted intake, indexed ranking/explanation, explicit live fallback, and per-program source-grounded chat |
+| `OPENAI_MODEL` | No | Intake and indexed-ranking model; defaults to `gpt-6-luna` |
+| `OPENAI_DISCOVERY_MODEL` | No | Optional override used only by live fallback |
+| `OPENAI_PROGRAM_CHAT_MODEL` | No | Optional override for the per-program guide; falls back through discovery and default models |
 
-Secrets belong in `.env.local` for local development and must not be committed or placed in browser code.
+Secrets belong in `.env.local` and must not be committed.
 
-## 17. Testing and verification
+## 15. Operations and verification
 
-The current test suite runs after a production build and covers:
+Before the presentation:
 
-- all deterministic rule operators;
-- representative reviewed-program ranking;
-- official source and verification-date presence;
-- Census geography normalization without retaining the street address;
-- geography-only cache keys;
-- HTTPS and hostname allowlisting, including lookalike-host rejection;
-- candidate citation requirements and deduplication;
-- server-rendered product content;
-- PWA and social metadata.
+1. Re-open high-priority official source pages.
+2. Update changed facts, URLs, and `lastChecked` values in `data/programs.seed.json`.
+3. Run `npm run db:seed`.
+4. Run `npm run lint && npm test`.
+5. Exercise multiple Sunnyvale stories, including a supported ZIP-only location and an out-of-scope city rejection.
 
-Commands:
+Automated checks cover dataset count and uniqueness, both-city coverage, HTTPS links, embedding determinism, geography mapping, source validation, rendered accessibility/PWA metadata, and production compilation.
 
-```bash
-npm run lint
-npm test
-```
+## 16. Current constraints and production path
 
-Live provider tests are intentionally separate from the deterministic unit suite because they require credentials, external network access, and variable provider output.
+This design is optimized for a one-time, two-city demonstration. It intentionally does not include an automated crawler, claim-level diffing, historical source snapshots, or a hosted vector database.
 
-## 18. Performance and cost profile
-
-The main latency path is external AI and web search rather than local rules. Rule evaluation is synchronous over ten in-bundle program records.
-
-Expected model calls per completed session:
-
-| Scenario | Intake | Web search | Structured live ranking | Total |
-|---|---:|---:|---:|---:|
-| Complete profile, uncached geography | 1 | 1 | 1 | 3 |
-| Complete profile, cached geography | 1 | 0 | 1 | 2 |
-| Hosted intake fails, uncached geography | 0 successful | 1 | 1 | 2 successful |
-| No location supplied | 1 attempted | 0 | 0 | 1 attempted |
-
-The 24-hour research cache reduces repeated web-search cost while preserving a fresh profile-aware ranking for each resident.
-
-## 19. Current constraints
-
-- The reviewed catalog contains ten programs and is maintained in TypeScript rather than a content-management workflow.
-- Local extraction is intentionally heuristic and most complete for the initial Santa Clara County scope.
-- Rate limits and discovery research are process-local rather than globally durable.
-- Live source support is limited to the configured domain allowlist.
-- Citation validation currently permits another path on a cited hostname; exact claim-to-path verification is a future hardening opportunity.
-- There is no administrative review interface for promoting a live candidate into the reviewed catalog.
-- There is no persistent audit log, distributed tracing, or provider cost telemetry.
-- Offline mode serves the application shell and reviewed client bundle but cannot perform hosted intake or live discovery.
-
-## 20. Recommended production evolution
-
-1. Move reviewed programs to versioned validated records with source sections, effective dates, authors, reviewers, and change history.
-2. Add a human review queue for live candidates before they can become reviewed programs.
-3. Move rate limiting and research caching to a durable shared edge store.
-4. Add structured operational telemetry for latency, provider status, tool usage, token usage, candidate rejection reasons, and cache hit rate without recording resident text.
-5. Build a representative evaluation set for extraction accuracy, rule agreement, follow-up usefulness, citation support, and unsupported-claim rate.
-6. Add exact citation-to-claim validation and source freshness checks.
-7. Add scheduled source-change detection while preserving human approval for rule changes.
-8. Add accessibility and mobile browser regression tests for the full optional-question flow.
-
-## 21. Architectural invariants
-
-The following rules should remain true as the system evolves:
-
-- AI output alone never grants or denies eligibility.
-- Every reviewed status is reproducible from a versioned profile and rule record.
-- Every live program links to a validated official source.
-- Missing resident information remains unknown rather than inferred.
-- Optional questions remain optional.
-- Raw free text is never forwarded to the live discovery ranking step.
-- Street addresses are never used as cache keys or sent to OpenAI.
-- Failure of live discovery never removes reviewed results.
+A production expansion should add scheduled source-freshness checks, human review queues, exact claim-to-source evidence, durable distributed rate limits, privacy-safe telemetry, broader geographic normalization, and an evaluation set for retrieval and direct/related classification. A hosted vector service becomes useful only after the corpus grows enough that a local scan and SQLite filtering no longer meet latency or operational needs.

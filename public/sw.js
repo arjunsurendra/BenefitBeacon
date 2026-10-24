@@ -1,5 +1,5 @@
-const CACHE = "benefitbeacon-v2";
-const APP_SHELL = ["/", "/manifest.webmanifest"];
+const CACHE = "benefitbeacon-v4";
+const APP_SHELL = ["/", "/manifest.webmanifest", "/benefitbeacon-logo-v1-64.png", "/benefitbeacon-logo-v1-192.png", "/benefitbeacon-logo-v1-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));

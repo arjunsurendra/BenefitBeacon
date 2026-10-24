@@ -18,19 +18,46 @@ test("server-renders the finished BenefitBeacon experience", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /<title>BenefitBeacon/);
-  assert.match(html, /You may qualify for help/);
-  assert.match(html, /Tell us about your situation/);
-  assert.match(html, /AI explains/);
-  assert.match(html, /official sources/i);
-  assert.match(html, /Optional follow-ups/);
-  assert.match(html, /Live official sources/);
+  assert.match(html, /Let’s find the help meant for you/);
+  assert.match(html, /Hi, I’m BenefitBeacon/);
+  assert.match(html, /benefitbeacon-logo-v1-64\.png/);
+  assert.match(html, /What would make life a little easier/);
+  assert.match(html, /What is available to me/);
+  assert.match(html, /I know what I want/);
+  assert.match(html, /Show all available programs/);
+  assert.match(html, /Guide me with questions/);
+  assert.match(html, /Show all 52 programs/);
+  assert.match(html, /Explore all programs/);
+  assert.match(html, /Ask BenefitBeacon/);
+  assert.match(html, /<strong>52<\/strong>/);
+  assert.match(html, /programs BenefitBeacon can explore/);
+  assert.match(html, /A guide that listens/);
+  assert.match(html, /52 programs ready to explore/i);
+  assert.doesNotMatch(html, /CA-17/);
+  assert.match(html, /Optional questions/i);
+  assert.match(html, /\$34K/);
+  assert.match(html, /\$50K/);
+  assert.match(html, /\$500/);
+  assert.doesNotMatch(html, /Cupertino/i);
+  assert.doesNotMatch(html, /AI understands|local index|SQLite|vector|extraction confidence/i);
   assert.doesNotMatch(html, /Search live programs|Use guided questions/);
+  assert.doesNotMatch(html, /Reviewed Program|reviewed programs|Rules decide/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/);
 });
 
 test("includes PWA and social metadata", async () => {
   const html = await (await render()).text();
   assert.match(html, /manifest\.webmanifest/);
-  assert.match(html, /og\.png/);
+  assert.match(html, /og-sunnyvale-guide\.png/);
   assert.match(html, /theme-color/);
+});
+
+test("includes core accessibility affordances", async () => {
+  const html = await (await render()).text();
+  assert.match(html, /href="#main-content"[^>]*>Skip to main content/);
+  assert.match(html, /<main id="main-content"[^>]*tabindex="-1"/);
+  assert.match(html, /aria-label="Use extra-large text"/);
+  assert.match(html, /aria-label="Use high contrast colors"/);
+  assert.match(html, /id="situation"[^>]*minLength="8"[^>]*required=""/);
+  assert.match(html, /aria-describedby="situation-help situation-privacy"/);
 });

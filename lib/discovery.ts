@@ -1,4 +1,4 @@
-import type { DiscoveredProgram, Geography, Program } from "@/lib/types";
+import type { DiscoveredProgram, Geography, UserProfile } from "@/lib/types";
 
 export const officialDomains = [
   "usa.gov",
@@ -31,6 +31,20 @@ export const officialDomains = [
   "valleywater.org",
 ] as const;
 
+export const trustedProgramDomains = [
+  "svcleanenergy.org",
+  "pge.com",
+  "shfb.org",
+  "sacredheartcs.org",
+  "211bayarea.org",
+  "benefitscheckup.org",
+] as const;
+
+export const trustedDiscoveryDomains = [
+  "ncoa.org",
+  "findhelp.org",
+] as const;
+
 const cityDomains: Record<string, string> = {
   sunnyvale: "sunnyvale.ca.gov",
   "san jose": "sanjoseca.gov",
@@ -47,6 +61,15 @@ const cityDomains: Record<string, string> = {
 
 const santaClaraCities = new Set(Object.keys(cityDomains));
 
+const supportedZipCities: Record<string, string> = {
+  "94085": "Sunnyvale",
+  "94086": "Sunnyvale",
+  "94087": "Sunnyvale",
+  "94089": "Sunnyvale",
+  "95014": "Cupertino",
+  "95015": "Cupertino",
+};
+
 export function cleanLocationInput(input: string): string {
   return input.trim().replace(/\s+/g, " ").slice(0, 180);
 }
@@ -58,7 +81,12 @@ export function looksLikeStreetAddress(input: string): boolean {
 export function localGeography(input: string): Geography | null {
   const clean = cleanLocationInput(input);
   const zip = clean.match(/^\d{5}(?:-\d{4})?$/)?.[0]?.slice(0, 5);
-  if (zip) return { label: `ZIP ${zip}`, zip, state: "California", stateCode: "CA" };
+  if (zip) {
+    const city = supportedZipCities[zip];
+    return city
+      ? { label: `${city}, Santa Clara County, CA, ${zip}`, city, county: "Santa Clara County", zip, state: "California", stateCode: "CA" }
+      : { label: `ZIP ${zip}`, zip, state: "California", stateCode: "CA" };
+  }
   if (looksLikeStreetAddress(clean)) return null;
 
   const parts = clean.split(",").map((part) => part.trim()).filter(Boolean);
@@ -118,10 +146,49 @@ export function geographyCacheKey(geography: Geography): string {
     .replace(/[^a-z0-9|]+/g, "-");
 }
 
+export function discoveryTopics(profile: UserProfile): string[] {
+  const topics = new Set<string>();
+  for (const value of profile.interests ?? []) {
+    if (typeof value !== "string") continue;
+    const topic = value.toLowerCase().replace(/[^a-z0-9 -]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+    if (topic.length >= 2) topics.add(topic);
+    if (topics.size === 6) break;
+  }
+  if (profile.hasHighWaterBill) topics.add("water and utility bill assistance");
+  return [...topics];
+}
+
+export function discoveryProfileSignals(profile: UserProfile): string[] {
+  const signals: string[] = [];
+  if (profile.ageRange) signals.push(`age range ${profile.ageRange}`);
+  if (profile.householdSize) signals.push(`household size ${profile.householdSize}`);
+  if (profile.childrenAges?.length) signals.push("household with children");
+  if (profile.incomeBand) signals.push(`broad income band ${profile.incomeBand}`);
+  if (profile.housing) signals.push(profile.housing === "own" ? "homeowner" : profile.housing === "rent" ? "renter" : profile.housing === "unhoused" ? "without stable housing" : "other housing situation");
+  if (profile.veteran) signals.push("veteran");
+  if (profile.activeDuty) signals.push("active-duty military");
+  if (profile.disabled) signals.push("person with a disability");
+  if (profile.caregiver) signals.push("unpaid caregiver");
+  if (profile.employment) signals.push(`employment status ${profile.employment}`);
+  if (profile.homeAgeYears !== undefined) signals.push("home age provided");
+  if (profile.hasHighWaterBill) signals.push("high utility costs");
+  return signals;
+}
+
+export function discoveryResearchCacheKey(geography: Geography, profile: UserProfile): string {
+  const topics = discoveryTopics(profile).map((topic) => topic.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""));
+  const signals = discoveryProfileSignals(profile).map((signal) => signal.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""));
+  return `${geographyCacheKey(geography)}|live-v4|needs:${topics.length ? topics.sort().join(",") : "general"}|profile:${signals.length ? signals.sort().join(",") : "none"}`;
+}
+
 export function allowedDomainsFor(geography: Geography): string[] {
   const city = geography.city?.toLowerCase();
   const preferred = city ? cityDomains[city] : undefined;
-  return [...new Set(preferred ? [preferred, ...officialDomains] : officialDomains)];
+  return [...new Set(preferred ? [preferred, ...officialDomains, ...trustedProgramDomains] : [...officialDomains, ...trustedProgramDomains])];
+}
+
+export function searchDomainsFor(geography: Geography): string[] {
+  return [...new Set([...allowedDomainsFor(geography), ...trustedDiscoveryDomains])];
 }
 
 function normalizeHostname(hostname: string) {
@@ -150,30 +217,28 @@ function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 70);
 }
 
-type RawCandidate = Omit<DiscoveredProgram, "id" | "discoveredAt" | "status">;
+type RawCandidate = Omit<DiscoveredProgram, "id" | "lastChecked" | "status">;
 
 export function validateDiscoveredPrograms(
   candidates: RawCandidate[],
   domains: readonly string[],
   citations: readonly string[],
-  curated: readonly Program[],
-  discoveredAt: string,
+  checkedAt: string,
 ): DiscoveredProgram[] {
   const cited = new Set(citations.filter((url) => isAllowedOfficialUrl(url, domains)).map(cleanUrl));
-  const existingNames = new Set(curated.map((program) => slug(program.name)));
-  const existingUrls = new Set(curated.flatMap((program) => [program.sourceUrl, program.applyUrl]).map((url) => cleanUrl(url)));
   const seen = new Set<string>();
 
-  return candidates.flatMap((candidate) => {
+  const validated = candidates.flatMap((candidate) => {
     if (!candidate?.name || !candidate.sourceUrl || !candidate.summary || !candidate.eligibilityText) return [];
+    if (candidate.matchType !== "direct" && candidate.matchType !== "related") return [];
     if (!isAllowedOfficialUrl(candidate.sourceUrl, domains)) return [];
     const sourceUrl = cleanUrl(candidate.sourceUrl);
     const isCited = cited.has(sourceUrl) || [...cited].some((citation) => {
       try { return new URL(citation).hostname === new URL(sourceUrl).hostname; } catch { return false; }
     });
-    if (!isCited || existingUrls.has(sourceUrl)) return [];
+    if (!isCited) return [];
     const nameKey = slug(candidate.name);
-    if (!nameKey || seen.has(nameKey) || existingNames.has(nameKey)) return [];
+    if (!nameKey || seen.has(nameKey)) return [];
     seen.add(nameKey);
 
     const applyUrl = isAllowedOfficialUrl(candidate.applyUrl, domains) ? cleanUrl(candidate.applyUrl) : sourceUrl;
@@ -182,8 +247,12 @@ export function validateDiscoveredPrograms(
       id: `discovered-${nameKey}`,
       applyUrl,
       sourceUrl,
-      discoveredAt,
-      status: "unverified" as const,
+      lastChecked: checkedAt,
+      status: "live" as const,
     }];
-  }).sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, 8);
+  }).sort((a, b) => b.relevanceScore - a.relevanceScore);
+
+  const direct = validated.filter((program) => program.matchType === "direct").slice(0, 5);
+  const related = validated.filter((program) => program.matchType === "related").slice(0, 3);
+  return [...direct, ...related];
 }

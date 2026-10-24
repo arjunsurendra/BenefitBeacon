@@ -1,4 +1,30 @@
-// Intentionally empty by default.
-// Add Drizzle tables here when the site actually needs a database.
-// See examples/d1/db/schema.ts for an opt-in example.
-export {};
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+
+export const programs = sqliteTable("programs", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  level: text("level").notNull(),
+  jurisdiction: text("jurisdiction").notNull(),
+  cityScope: text("city_scope").notNull(),
+  category: text("category").notNull(),
+  summary: text("summary").notNull(),
+  benefit: text("benefit").notNull(),
+  eligibilityText: text("eligibility_text").notNull(),
+  applyUrl: text("apply_url").notNull(),
+  sourceUrl: text("source_url").notNull(),
+  sourceLabel: text("source_label").notNull(),
+  sourceSnippet: text("source_snippet").notNull(),
+  interestTags: text("interest_tags").notNull(),
+  audienceTags: text("audience_tags").notNull(),
+  housingScope: text("housing_scope").notNull().default("any"),
+  minAge: integer("min_age"),
+  maxAge: integer("max_age"),
+  incomeTargeted: integer("income_targeted", { mode: "boolean" }).notNull().default(false),
+  requiresChildren: integer("requires_children", { mode: "boolean" }).notNull().default(false),
+  requiresDisability: integer("requires_disability", { mode: "boolean" }).notNull().default(false),
+  requiresVeteran: integer("requires_veteran", { mode: "boolean" }).notNull().default(false),
+  requiresCaregiver: integer("requires_caregiver", { mode: "boolean" }).notNull().default(false),
+  embeddingJson: text("embedding_json").notNull(),
+  lastChecked: text("last_checked").notNull(),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+});

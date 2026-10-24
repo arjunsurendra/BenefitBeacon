@@ -26,7 +26,7 @@ const profileSchema = {
     employment: { type: ["string", "null"], enum: ["employed", "unemployed", "retired", "student", "other", null] },
     homeAgeYears: { type: ["integer", "null"], minimum: 0, maximum: 250 },
     hasHighWaterBill: { type: ["boolean", "null"] },
-    interests: { type: ["array", "null"], items: { type: "string" }, maxItems: 8 },
+    interests: { type: ["array", "null"], items: { type: "string", enum: ["food", "health care", "housing", "utilities", "water", "energy", "home repair", "landscape", "child care", "tax credits", "transportation", "employment", "veterans", "disability", "caregiver"] }, maxItems: 8 },
     language: { type: ["string", "null"] },
     confidence: { type: "number", minimum: 0, maximum: 1 },
     followUpQuestions: { type: "array", items: { type: "string" }, maxItems: 3 },
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return Response.json({ error: "AI mode is not configured. Guided matching is still available." }, { status: 503 });
+    return Response.json({ error: "This feature is temporarily unavailable. Guided questions are still available." }, { status: 503 });
   }
 
   const body = (await request.json().catch(() => null)) as { text?: unknown } | null;
@@ -92,6 +92,7 @@ export async function POST(request: Request) {
         "Extract only facts explicitly stated by the resident.",
         "Never infer race, citizenship, health conditions, disability, exact location, or other sensitive traits.",
         "Use null for unknown values. Normalize California to state CA and cities to lowercase.",
+        "Normalize interests to the allowed categories; for example, water rebates becomes water, power-bill help becomes utilities or energy, and tax refunds or family credits becomes tax credits.",
         "Use broad income and age ranges only. Do not decide benefit eligibility.",
         "Ask at most three short follow-up questions that would distinguish high-impact program matches.",
       ].join(" "),
@@ -109,14 +110,14 @@ export async function POST(request: Request) {
   });
 
   if (!response.ok) {
-    if (response.status === 401) return Response.json({ error: "The OpenAI API key was rejected. Replace OPENAI_API_KEY in .env.local, then restart the local server." }, { status: 503 });
-    if (response.status === 429) return Response.json({ error: "The OpenAI project has reached a rate or usage limit. Guided matching is still available." }, { status: 429 });
-    return Response.json({ error: "AI intake is temporarily unavailable. Guided matching is still available." }, { status: 502 });
+    if (response.status === 401) return Response.json({ error: "This feature is temporarily unavailable. Guided questions are still available." }, { status: 503 });
+    if (response.status === 429) return Response.json({ error: "This feature is busy. Guided questions are still available." }, { status: 429 });
+    return Response.json({ error: "This feature is temporarily unavailable. Guided questions are still available." }, { status: 502 });
   }
 
   const payload = (await response.json()) as { output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> };
   const outputText = getOutputText(payload);
-  if (!outputText) return Response.json({ error: "The AI response could not be read." }, { status: 502 });
+  if (!outputText) return Response.json({ error: "We could not understand the response. Please try again." }, { status: 502 });
 
   const parsed = JSON.parse(outputText) as Record<string, unknown>;
   return Response.json({

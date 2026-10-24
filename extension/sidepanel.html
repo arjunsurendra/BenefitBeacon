@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Beacon Benefit — Your benefit agent</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <span><strong>Beacon Benefit</strong><small>Your benefit agent</small></span>
+    </header>
+
+    <main class="agent-shell">
+      <section id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions"></section>
+      <form id="chat-form" class="composer">
+        <label for="chat-input">Ask while you apply</label>
+        <div><textarea id="chat-input" rows="2" maxlength="900" placeholder="Ask a question or say “fill this page”…" required autofocus></textarea><button type="submit" aria-label="Send message">↑</button></div>
+        <small>Beacon Benefit never submits an application. Do not share Social Security or account numbers.</small>
+      </form>
+    </main>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

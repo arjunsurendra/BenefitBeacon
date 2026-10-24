@@ -33,48 +33,6 @@ export type UserProfile = {
   language?: string;
 };
 
-export type RuleOperator = "eq" | "in" | "gte" | "lte" | "in_list" | "between";
-
-export type EligibilityRule = {
-  field: keyof UserProfile;
-  op: RuleOperator;
-  value: unknown;
-  label: string;
-};
-
-export type Program = {
-  id: string;
-  name: string;
-  level: "city" | "county" | "state" | "federal";
-  jurisdiction: string;
-  category: "food" | "health" | "utilities" | "home" | "veterans" | "family";
-  summary: string;
-  benefit: string;
-  eligibility: {
-    all?: EligibilityRule[];
-    any?: EligibilityRule[];
-    not?: EligibilityRule[];
-  };
-  applyUrl: string;
-  steps: string[];
-  sourceUrl: string;
-  sourceLabel: string;
-  sourceSnippet: string;
-  lastVerified: string;
-  impactScore: number;
-};
-
-export type EligibilityStatus = "likely" | "maybe" | "unlikely";
-
-export type EligibilityResult = {
-  program: Program;
-  status: EligibilityStatus;
-  score: number;
-  matchedRules: string[];
-  failedRules: string[];
-  missingInfo: string[];
-};
-
 export type IntakeResponse = {
   profile: UserProfile;
   confidence: number;
@@ -96,6 +54,7 @@ export type Geography = {
 
 export type DiscoveredProgram = {
   id: string;
+  matchType: "direct" | "related";
   name: string;
   level: "city" | "county" | "state" | "federal";
   jurisdiction: string;
@@ -109,17 +68,43 @@ export type DiscoveredProgram = {
   sourceSnippet: string;
   relevanceReason: string;
   relevanceScore: number;
-  discoveredAt: string;
-  status: "unverified";
+  lastChecked: string;
+  status: "indexed" | "live";
 };
 
 export type DiscoveryResponse = {
   geography: Geography;
   candidates: DiscoveredProgram[];
-  mode: "openai";
-  model: string;
+  mode: "browse" | "indexed" | "indexed-ai" | "live-fallback";
+  model?: string;
   searchedAt: string;
   cacheKey: string;
   cached: boolean;
   addressDiscarded: boolean;
+  indexedCount: number;
+  fallbackAvailable: boolean;
+};
+
+export type ProgramChatCitation = {
+  url: string;
+  title: string;
+  startIndex: number;
+  endIndex: number;
+};
+
+export type ProgramChatMessage = {
+  role: "user" | "assistant";
+  text: string;
+  needsMoreInfo?: boolean;
+  citations?: ProgramChatCitation[];
+  sources?: Array<{ url: string; title: string }>;
+};
+
+export type ProgramChatResponse = {
+  answer: string;
+  needsMoreInfo: boolean;
+  citations: ProgramChatCitation[];
+  sources: Array<{ url: string; title: string }>;
+  model: string;
+  searchedAt: string;
 };

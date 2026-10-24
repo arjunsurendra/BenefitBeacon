@@ -43,3 +43,10 @@ next-env.d.ts
 /outputs/
 /work/
 /.codex-tmp/
+/collateral-video/.venv/
+/collateral-video/audio/
+/collateral-video/preview-frames/
+/collateral-video/.~lock.*
+/presentation/.build/
+/presentation/.codex-finalizer/
+/presentation/node_modules

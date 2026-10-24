@@ -11,3 +11,8 @@ export function getDb() {
 
   return drizzle(env.DB, { schema });
 }
+
+export function getProgramDb() {
+  if (!env.DB) throw new Error("LOCAL_PROGRAM_INDEX_UNAVAILABLE");
+  return env.DB;
+}

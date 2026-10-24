@@ -1,0 +1,20 @@
+01 — The problem and the scale
+Public help is scattered across agencies, complex rules, and forms. Sunnyvale has no published citywide estimate of unclaimed benefits—that visibility gap is part of the problem. California lawmakers say billions in eligible tax credits go unclaimed each year. Nationally, IRS research estimated $4.7 billion in EITC went unclaimed in 2019, while about one in five eligible taxpayers misses the credit. Different scopes; one access problem.
+
+02 — Why residents miss help
+Residents should not need to know the right agency or program name. They need one clear place to describe their situation, compare options, and take the next step.
+
+03 — Meet BenefitBeacon
+Meet BenefitBeacon: a personal AI guide for Sunnyvale residents. Ask in your own words, or answer a few optional questions. No account and no program name are needed.
+
+04 — Discovery and matching
+Beacon checks fifty source-linked city, county, state, federal, utility, and community programs. Eligibility rules remove clear mismatches. Local semantic matching and AI bring the strongest possibilities forward.
+
+05 — Explainable results
+Every result shows the benefit, published rules, official source, and last-checked date. AI explains; the program decides. Residents can ask questions grounded in current program pages.
+
+06 — Technology stack
+BenefitBeacon uses a responsive React progressive web app, a local SQLite program index with precomputed embeddings, OpenAI for understanding and explanation, official web search for current answers, and a Chrome extension beside the application. If AI is unavailable, deterministic matching still works.
+
+07 — Close
+BenefitBeacon turns a fragmented system into a guided path—from discovery, to understanding, to action. Find the help. Follow the path.

@@ -57,6 +57,7 @@ export function extractLocally(raw: string): { profile: UserProfile; confidence:
   if (/repair|weatheriz|renovat|home improvement/.test(text)) interests.push("home repair");
   if (/landscap|lawn|garden/.test(text)) interests.push("landscape");
   if (/child care|daycare/.test(text)) interests.push("child care");
+  if (/tax credit|tax refund|\bctc\b|\beitc\b|\bcaleitc\b|young child credit/.test(text)) interests.push("tax credits");
   if (/food|grocer|meal/.test(text)) interests.push("food");
   if (interests.length) profile.interests = interests;
 

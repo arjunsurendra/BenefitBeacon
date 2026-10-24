@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "presentation": {
+    "id": "1abPpWX1LiIVxoMKuos9xrUhVH7XJas6yFktxJbqKNc8",
+    "title": "BenefitBeacon-Presentation-v5-avatar-safe",
+    "revisionId": "89Pmi1KCuiSNpQ",
+    "slideCount": 9
+  },
+  "snapshotSha256": "ac04d0ac3e0d919050e5ef795edea9ef721b09d660f077edd3f24d11a194e8b0",
+  "summary": {
+    "totalIssues": 0,
+    "reportedIssues": 0,
+    "truncated": false,
+    "bySeverity": {},
+    "byCode": {}
+  },
+  "issues": []
+}

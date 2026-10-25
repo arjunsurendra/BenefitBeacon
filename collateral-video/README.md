@@ -1,23 +1,12 @@
 # BenefitBeacon introduction video
 
-This folder produces a narrated, captioned, 1080p infographic video for presentations, websites, social posts, and constituent outreach.
+This folder contains a narrated, captioned, 1080p infographic video for presentations, websites, social posts, and constituent outreach.
 
 ## Deliverable
 
 - `BenefitBeacon-introduction.mp4` — 1 minute 27 seconds, 1920×1080, H.264 video with AAC audio
 
 The story opens with three carefully scoped indicators of unclaimed money and assistance, explains the resident problem, introduces BenefitBeacon, demonstrates the discovery journey, summarizes the technical stack, and ends with the call to action.
-
-## Rebuild
-
-The renderer uses local macOS narration, Pillow, NumPy, and the FFmpeg binary supplied by `imageio-ffmpeg`.
-
-```bash
-cd collateral-video
-.venv/bin/python render_video.py
-```
-
-The script regenerates the narration, synthesized ambient audio, preview frames, and final MP4. Edit `NARRATION` and `CAPTIONS` in `render_video.py` together so the spoken and on-screen story remain aligned. The readable narration is also kept in `narration.txt`.
 
 ## Claim notes
 

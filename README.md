@@ -1,6 +1,6 @@
 # BenefitBeacon
 
-BenefitBeacon is a AI benefits assistant for Sunnyvale residents. It helps a resident describe what they need, answer optional follow-up questions, discover relevant city, county, California, federal, utility, tax, health, food, housing, disability, senior, family, and prescription-assistance programs, and continue receiving guidance while applying on an official website.
+BenefitBeacon is an AI benefits assistant for Sunnyvale residents. It helps a resident describe what they need, answer optional follow-up questions, discover relevant city, county, California, federal, utility, tax, health, food, housing, disability, senior, family, and prescription-assistance programs, and continue receiving guidance while applying on an official website.
 
 The product is designed around a simple principle: AI may help understand, rank, and explain, but authoritative program records and official sources remain the basis for every result. BenefitBeacon provides informational starting points; each program administrator makes the final eligibility and award decision.
 
